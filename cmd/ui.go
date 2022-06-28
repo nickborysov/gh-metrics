@@ -79,7 +79,7 @@ func getReadyForReviewOrPrCreatedAt(prCreated string, timelineItems TimelineItem
 // getTimeToFirstReview returns the time to first review, in hours and
 // minutes, for a given PR.
 //
-//   timeToFirstReview = (readyForReviewAt || prCreatedAt) - firstReviewdAt
+//   timeToFirstReview = (readyForReviewAt || prCreatedAt) - firstReviwedAt
 //
 func (ui *UI) getTimeToFirstReview(author, prCreatedAt string, isDraft bool, timelineItems TimelineItems, reviews Reviews) string {
 	// The pull request is still in a draft state, because it has not
@@ -90,6 +90,30 @@ func (ui *UI) getTimeToFirstReview(author, prCreatedAt string, isDraft bool, tim
 
 	for _, review := range reviews.Nodes {
 		if review.Author.Login != author {
+			readyForReviewOrPrCreatedAt, _ := time.Parse(time.RFC3339, getReadyForReviewOrPrCreatedAt(prCreatedAt, timelineItems))
+			firstReviewedAt, _ := time.Parse(time.RFC3339, review.CreatedAt)
+
+			return formatDuration(ui.subtractTime(firstReviewedAt, readyForReviewOrPrCreatedAt), ui.CSVFormat)
+		}
+	}
+
+	return DefaultEmptyCell
+}
+
+// getTimeToFirstApprovalReview returns the time to first approval review, in hours and
+// minutes, for a given PR.
+//
+//   timeToFirstReview = (readyForReviewAt || prCreatedAt) - firstApprovedAt
+//
+func (ui *UI) getTimeToFirstApprovalReview(author, prCreatedAt string, isDraft bool, timelineItems TimelineItems, reviews Reviews) string {
+	// The pull request is still in a draft state, because it has not
+	// yet been marked as ready for review.
+	if timelineItems.TotalCount == 0 && isDraft {
+		return DefaultEmptyCell
+	}
+
+	for _, review := range reviews.Nodes {
+		if review.Author.Login != author && review.State == ReviewApprovedState {
 			readyForReviewOrPrCreatedAt, _ := time.Parse(time.RFC3339, getReadyForReviewOrPrCreatedAt(prCreatedAt, timelineItems))
 			firstReviewedAt, _ := time.Parse(time.RFC3339, review.CreatedAt)
 
@@ -140,6 +164,36 @@ func (ui *UI) getFirstReviewToLastReview(login string, reviews Reviews) string {
 		if nonAuthorReviews[i].State == ReviewApprovedState {
 			lastReviewedAt, _ := time.Parse(time.RFC3339, nonAuthorReviews[i].CreatedAt)
 			return formatDuration(ui.subtractTime(lastReviewedAt, firstReviewedAt), ui.CSVFormat)
+		}
+	}
+
+	return DefaultEmptyCell
+}
+
+// getLastReviewToMerge returns the last review to last approving review time, in
+// hours and minutes, for a given PR.
+//
+//   lastReviewToLastReview = lastReviewedAt - lastReviewedAt
+//
+func (ui *UI) getLastReviewToMerge(author, prMergedAtString string, reviews Reviews) string {
+	var nonAuthorReviews ReviewNodes
+	for _, review := range reviews.Nodes {
+		if review.Author.Login != author {
+			nonAuthorReviews = append(nonAuthorReviews, review)
+		}
+	}
+
+	if len(nonAuthorReviews) == 0 {
+		return DefaultEmptyCell
+	}
+
+	for i := len(nonAuthorReviews) - 1; i >= 0; i-- {
+		review := nonAuthorReviews[i]
+		if review.Author.Login != author && review.State == ReviewApprovedState {
+			prMergedAt, _ := time.Parse(time.RFC3339, prMergedAtString)
+			firstApprovedAt, _ := time.Parse(time.RFC3339, review.CreatedAt)
+
+			return formatDuration(ui.subtractTime(prMergedAt, firstApprovedAt), ui.CSVFormat)
 		}
 	}
 
@@ -207,11 +261,13 @@ func (ui *UI) printMetricsImpl(defaultResultCount int) string {
 		"Deletions",
 		"Changed Files",
 		"Time to First Review",
+		"Time To The First Approval",
 		"Comments",
 		"Participants",
 		"Feature Lead Time",
 		"First to Last Review",
 		"First Approval to Merge",
+		"Last Approval to Merge",
 	})
 
 	for {
@@ -229,6 +285,13 @@ func (ui *UI) printMetricsImpl(defaultResultCount int) string {
 					node.PullRequest.TimelineItems,
 					node.PullRequest.Reviews,
 				),
+				ui.getTimeToFirstApprovalReview(
+					node.PullRequest.Author.Login,
+					node.PullRequest.CreatedAt,
+					node.PullRequest.IsDraft,
+					node.PullRequest.TimelineItems,
+					node.PullRequest.Reviews,
+				),
 				node.PullRequest.Comments.TotalCount,
 				node.PullRequest.Participants.TotalCount,
 				ui.getFeatureLeadTime(
@@ -240,6 +303,11 @@ func (ui *UI) printMetricsImpl(defaultResultCount int) string {
 					node.PullRequest.Reviews,
 				),
 				ui.getFirstApprovalToMerge(
+					node.PullRequest.Author.Login,
+					node.PullRequest.MergedAt,
+					node.PullRequest.Reviews,
+				),
+				ui.getLastReviewToMerge(
 					node.PullRequest.Author.Login,
 					node.PullRequest.MergedAt,
 					node.PullRequest.Reviews,
